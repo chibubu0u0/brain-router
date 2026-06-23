@@ -59,16 +59,6 @@ function getAgentKeyFromCommand(command: string) {
   return map[command] || null;
 }
 
-function getAgentDisplayName(agentKey: string) {
-  const map: Record<string, string> = {
-    ryan: "Ryan Agent",
-    queenie: "Queenie Agent",
-    eric: "Eric Agent",
-  };
-
-  return map[agentKey] || agentKey;
-}
-
 async function postToSlack(responseUrl: string, text: string) {
   const response = await fetch(responseUrl, {
     method: "POST",
@@ -76,7 +66,7 @@ async function postToSlack(responseUrl: string, text: string) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      response_type: "ephemeral",
+      response_type: "in_channel",
       text,
     }),
   });
@@ -127,7 +117,7 @@ async function processSlackCommand(params: {
   } catch (error: any) {
     await postToSlack(
       responseUrl,
-      `Brain Router 發生錯誤：${error.message || "Unknown error"}`
+      `發生錯誤：${error.message || "Unknown error"}`
     );
   }
 }
@@ -183,26 +173,12 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    const agentKey = getAgentKeyFromCommand(command);
-
-    if (agentKey) {
-      return NextResponse.json({
-        response_type: "ephemeral",
-        text: `收到，我正在直接詢問 ${getAgentDisplayName(
-          agentKey
-        )}，並讀取這個 Agent 的完整對話紀錄。\n\n問題：${text}`,
-      });
-    }
-
-    return NextResponse.json({
-      response_type: "ephemeral",
-      text: `收到，我正在請 Brain Router 判斷需要詢問哪些 expert brain。\n\n問題：${text}`,
-    });
+    return new NextResponse(null, { status: 200 });
   } catch (error: any) {
     return NextResponse.json(
       {
         response_type: "ephemeral",
-        text: `Brain Router 發生錯誤：${error.message || "Unknown error"}`,
+        text: `發生錯誤：${error.message || "Unknown error"}`,
       },
       { status: 500 }
     );

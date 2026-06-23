@@ -257,7 +257,7 @@ export async function runDirectAgent(agentKey: string, userMessage: string) {
   return {
     agent: profile,
     expertResponse,
-    finalAnswer: `# ${profile.display_name}\n\n${expertResponse.response}`,
+    finalAnswer: expertResponse.response,
   };
 }
 
@@ -342,6 +342,6 @@ ${userMessage}
     agent: profile,
     thread,
     expertResponse,
-    finalAnswer: `# ${profile.display_name}\n\n${expertResponse.response}`,
+    finalAnswer: expertResponse.response,
   };
 }
