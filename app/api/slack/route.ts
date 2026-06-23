@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import crypto from "crypto";
-import { runBrainRouter, runDirectAgent } from "@/lib/brain-router";
+import {
+  runBrainRouter,
+  runDirectAgentWithConversation,
+} from "@/lib/brain-router";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -56,6 +59,16 @@ function getAgentKeyFromCommand(command: string) {
   return map[command] || null;
 }
 
+function getAgentDisplayName(agentKey: string) {
+  const map: Record<string, string> = {
+    ryan: "Ryan Agent",
+    queenie: "Queenie Agent",
+    eric: "Eric Agent",
+  };
+
+  return map[agentKey] || agentKey;
+}
+
 async function postToSlack(responseUrl: string, text: string) {
   const response = await fetch(responseUrl, {
     method: "POST",
@@ -78,14 +91,33 @@ async function processSlackCommand(params: {
   command: string;
   text: string;
   responseUrl: string;
+  slackTeamId: string;
+  slackChannelId: string;
+  slackUserId: string;
 }) {
-  const { command, text, responseUrl } = params;
+  const {
+    command,
+    text,
+    responseUrl,
+    slackTeamId,
+    slackChannelId,
+    slackUserId,
+  } = params;
 
   try {
     const agentKey = getAgentKeyFromCommand(command);
 
     if (agentKey) {
-      const result = await runDirectAgent(agentKey, text);
+      const result = await runDirectAgentWithConversation(agentKey, text, {
+        source: "slack",
+        projectKey: "brain_router",
+        slackTeamId,
+        slackChannelId,
+        slackUserId,
+        slackCommand: command,
+        slackResponseUrl: responseUrl,
+      });
+
       await postToSlack(responseUrl, result.finalAnswer);
       return;
     }
@@ -122,10 +154,14 @@ export async function POST(req: NextRequest) {
     const text = params.get("text")?.trim() || "";
     const responseUrl = params.get("response_url");
 
+    const slackTeamId = params.get("team_id") || "manual";
+    const slackChannelId = params.get("channel_id") || "manual";
+    const slackUserId = params.get("user_id") || "manual";
+
     if (!text) {
       return NextResponse.json({
         response_type: "ephemeral",
-        text: `請在 \`${command}\` 後面輸入內容，例如：\`${command} 評估：我們要不要做 AI 攝影服務？\``,
+        text: `請在 \`${command}\` 後面輸入內容，例如：\`${command} 這個方向你怎麼看？\``,
       });
     }
 
@@ -141,6 +177,9 @@ export async function POST(req: NextRequest) {
         command,
         text,
         responseUrl,
+        slackTeamId,
+        slackChannelId,
+        slackUserId,
       })
     );
 
@@ -149,7 +188,9 @@ export async function POST(req: NextRequest) {
     if (agentKey) {
       return NextResponse.json({
         response_type: "ephemeral",
-        text: `收到，我正在直接詢問 ${agentKey} Agent。\n\n問題：${text}`,
+        text: `收到，我正在直接詢問 ${getAgentDisplayName(
+          agentKey
+        )}，並讀取這個 Agent 的完整對話紀錄。\n\n問題：${text}`,
       });
     }
 

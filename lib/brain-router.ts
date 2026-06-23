@@ -260,3 +260,88 @@ export async function runDirectAgent(agentKey: string, userMessage: string) {
     finalAnswer: `# ${profile.display_name}\n\n${expertResponse.response}`,
   };
 }
+
+export async function runDirectAgentWithConversation(
+  agentKey: string,
+  userMessage: string,
+  conversationContext: any
+) {
+  const {
+    getOrCreateAgentConversationThread,
+    saveAgentConversationMessage,
+    getAgentConversationMessages,
+    formatAgentConversationMessages,
+  } = await import("./agent-conversations");
+
+  const agentProfiles = await getActiveAgentProfiles();
+
+  const profile = agentProfiles.find(
+    (agent) => agent.agent_key === agentKey
+  );
+
+  if (!profile) {
+    throw new Error(`Agent profile not found: ${agentKey}`);
+  }
+
+  const thread = await getOrCreateAgentConversationThread({
+    ...conversationContext,
+    agentKey,
+  });
+
+  await saveAgentConversationMessage({
+    threadId: thread.id,
+    agentKey,
+    role: "user",
+    content: userMessage,
+    context: {
+      ...conversationContext,
+      agentKey,
+    },
+  });
+
+  const messages = await getAgentConversationMessages(thread.id);
+  const fullConversation = formatAgentConversationMessages(messages);
+
+  const enhancedUserMessage = `
+以下是 ${profile.display_name} 與使用者在這個對話串中的完整對話紀錄。
+
+你必須把這些對話視為 Eric Agent 的上下文。
+不要把自己當成單次回答的 AI。
+你要延續前面的判斷、風格、已定案的結論與使用者偏好。
+
+完整對話紀錄：
+${fullConversation}
+
+本次最新問題：
+${userMessage}
+`;
+
+  const expertResponse = await askExpertBrain(
+    {
+      agent_key: agentKey,
+      reason: "使用者透過 Slack 指令直接指定這個 Agent 回答，並要求 Agent 讀取完整對話紀錄。",
+      priority: "high",
+      question_for_expert: userMessage,
+    },
+    enhancedUserMessage,
+    agentProfiles
+  );
+
+  await saveAgentConversationMessage({
+    threadId: thread.id,
+    agentKey,
+    role: "assistant",
+    content: expertResponse.response,
+    context: {
+      ...conversationContext,
+      agentKey,
+    },
+  });
+
+  return {
+    agent: profile,
+    thread,
+    expertResponse,
+    finalAnswer: `# ${profile.display_name}\n\n${expertResponse.response}`,
+  };
+}
