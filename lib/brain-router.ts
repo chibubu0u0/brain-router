@@ -30,7 +30,7 @@ type ExpertResponse = {
 };
 
 function getOpenAIModel() {
-  return process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  return process.env.OPENAI_MODEL || "gpt-4o-mini";
 }
 
 function extractOutputText(data: any) {
@@ -145,17 +145,17 @@ export async function askExpertBrain(
   const expertPrompt = buildExpertPrompt(profile);
 
   const expertUserMessage = `
+這是 Brain Router 指派給你的問題。
+請用你的獨立 Agent 視角回答，但不要用制式報告語氣。
+
 原始使用者問題：
 ${userMessage}
 
-Brain Router 指派給你的問題：
+Router 指派給你的重點：
 ${expert.question_for_expert}
 
-Router 詢問你的原因：
+參與原因：
 ${expert.reason}
-
-你的參與優先級：
-${expert.priority}
 `;
 
   const response = await callOpenAI(expertPrompt, expertUserMessage);
@@ -232,6 +232,7 @@ export async function runBrainRouter(userMessage: string) {
     finalAnswer,
   };
 }
+
 export async function runDirectAgent(agentKey: string, userMessage: string) {
   const agentProfiles = await getActiveAgentProfiles();
 
@@ -243,21 +244,24 @@ export async function runDirectAgent(agentKey: string, userMessage: string) {
     throw new Error(`Agent profile not found: ${agentKey}`);
   }
 
-  const expertResponse = await askExpertBrain(
-    {
-      agent_key: agentKey,
-      reason: "使用者透過 Slack 指令直接指定這個 Agent 回答。",
-      priority: "high",
-      question_for_expert: userMessage,
-    },
-    userMessage,
-    agentProfiles
-  );
+  const systemPrompt = buildExpertPrompt(profile);
+
+  const directMessage = `
+使用者現在是直接在 Slack 找你聊天。
+你不是 Brain Router，也不是被 Router 指派任務。
+你就是 ${profile.display_name}。
+
+請用自然、像真人聊天的方式回覆。
+
+使用者說：
+${userMessage}
+`;
+
+  const response = await callOpenAI(systemPrompt, directMessage);
 
   return {
     agent: profile,
-    expertResponse,
-    finalAnswer: expertResponse.response,
+    finalAnswer: response,
   };
 }
 
@@ -302,36 +306,37 @@ export async function runDirectAgentWithConversation(
   const messages = await getAgentConversationMessages(thread.id);
   const fullConversation = formatAgentConversationMessages(messages);
 
-  const enhancedUserMessage = `
-以下是 ${profile.display_name} 與使用者在這個對話串中的完整對話紀錄。
+  const systemPrompt = buildExpertPrompt(profile);
 
-你必須把這些對話視為 Eric Agent 的上下文。
-不要把自己當成單次回答的 AI。
-你要延續前面的判斷、風格、已定案的結論與使用者偏好。
+  const directConversationMessage = `
+這是你和使用者在 Slack 裡的對話紀錄。
+這些內容是你的記憶與上下文，不是要你重述。
+
+你現在不是 Brain Router。
+你也不是被 Brain Router 指派任務。
+使用者是直接找你本人聊天。
+
+請自然延續對話。
+不要用報告格式。
+不要百科式介紹。
+不要寫「以下是一些建議」。
+不要寫空泛顧問句。
+如果使用者只是分享偏好，你就像真人一樣接話、理解、補一點你的看法即可。
 
 完整對話紀錄：
 ${fullConversation}
 
-本次最新問題：
+使用者最新訊息：
 ${userMessage}
 `;
 
-  const expertResponse = await askExpertBrain(
-    {
-      agent_key: agentKey,
-      reason: "使用者透過 Slack 指令直接指定這個 Agent 回答，並要求 Agent 讀取完整對話紀錄。",
-      priority: "high",
-      question_for_expert: userMessage,
-    },
-    enhancedUserMessage,
-    agentProfiles
-  );
+  const response = await callOpenAI(systemPrompt, directConversationMessage);
 
   await saveAgentConversationMessage({
     threadId: thread.id,
     agentKey,
     role: "assistant",
-    content: expertResponse.response,
+    content: response,
     context: {
       ...conversationContext,
       agentKey,
@@ -341,7 +346,6 @@ ${userMessage}
   return {
     agent: profile,
     thread,
-    expertResponse,
-    finalAnswer: expertResponse.response,
+    finalAnswer: response,
   };
 }
