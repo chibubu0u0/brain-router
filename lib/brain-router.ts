@@ -232,3 +232,31 @@ export async function runBrainRouter(userMessage: string) {
     finalAnswer,
   };
 }
+export async function runDirectAgent(agentKey: string, userMessage: string) {
+  const agentProfiles = await getActiveAgentProfiles();
+
+  const profile = agentProfiles.find(
+    (agent) => agent.agent_key === agentKey
+  );
+
+  if (!profile) {
+    throw new Error(`Agent profile not found: ${agentKey}`);
+  }
+
+  const expertResponse = await askExpertBrain(
+    {
+      agent_key: agentKey,
+      reason: "使用者透過 Slack 指令直接指定這個 Agent 回答。",
+      priority: "high",
+      question_for_expert: userMessage,
+    },
+    userMessage,
+    agentProfiles
+  );
+
+  return {
+    agent: profile,
+    expertResponse,
+    finalAnswer: `# ${profile.display_name}\n\n${expertResponse.response}`,
+  };
+}

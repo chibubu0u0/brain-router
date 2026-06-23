@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import crypto from "crypto";
-import { runBrainRouter } from "@/lib/brain-router";
+import { runBrainRouter, runDirectAgent } from "@/lib/brain-router";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -46,6 +46,16 @@ function verifySlackSignature(rawBody: string, req: NextRequest) {
   return crypto.timingSafeEqual(a, b);
 }
 
+function getAgentKeyFromCommand(command: string) {
+  const map: Record<string, string> = {
+    "/ryan": "ryan",
+    "/queenie": "queenie",
+    "/eric": "eric",
+  };
+
+  return map[command] || null;
+}
+
 async function postToSlack(responseUrl: string, text: string) {
   const response = await fetch(responseUrl, {
     method: "POST",
@@ -64,10 +74,23 @@ async function postToSlack(responseUrl: string, text: string) {
   }
 }
 
-async function processBrainRouter(text: string, responseUrl: string) {
-  try {
-    const result = await runBrainRouter(text);
+async function processSlackCommand(params: {
+  command: string;
+  text: string;
+  responseUrl: string;
+}) {
+  const { command, text, responseUrl } = params;
 
+  try {
+    const agentKey = getAgentKeyFromCommand(command);
+
+    if (agentKey) {
+      const result = await runDirectAgent(agentKey, text);
+      await postToSlack(responseUrl, result.finalAnswer);
+      return;
+    }
+
+    const result = await runBrainRouter(text);
     await postToSlack(responseUrl, result.finalAnswer);
   } catch (error: any) {
     await postToSlack(
@@ -95,13 +118,14 @@ export async function POST(req: NextRequest) {
 
     const params = new URLSearchParams(rawBody);
 
+    const command = params.get("command") || "/brain";
     const text = params.get("text")?.trim() || "";
     const responseUrl = params.get("response_url");
 
     if (!text) {
       return NextResponse.json({
         response_type: "ephemeral",
-        text: "請在 `/brain` 後面輸入內容，例如：`/brain 評估：我們要不要做 AI 攝影服務？`",
+        text: `請在 \`${command}\` 後面輸入內容，例如：\`${command} 評估：我們要不要做 AI 攝影服務？\``,
       });
     }
 
@@ -112,7 +136,22 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    waitUntil(processBrainRouter(text, responseUrl));
+    waitUntil(
+      processSlackCommand({
+        command,
+        text,
+        responseUrl,
+      })
+    );
+
+    const agentKey = getAgentKeyFromCommand(command);
+
+    if (agentKey) {
+      return NextResponse.json({
+        response_type: "ephemeral",
+        text: `收到，我正在直接詢問 ${agentKey} Agent。\n\n問題：${text}`,
+      });
+    }
 
     return NextResponse.json({
       response_type: "ephemeral",
