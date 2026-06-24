@@ -20,7 +20,14 @@ export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
 
-  if (secret && auth !== `Bearer ${secret}`) {
+  if (!secret) {
+    return NextResponse.json(
+      { ok: false, error: "Server missing CRON_SECRET" },
+      { status: 503 }
+    );
+  }
+
+  if (auth !== `Bearer ${secret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
