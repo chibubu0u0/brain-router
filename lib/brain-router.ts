@@ -67,14 +67,23 @@ function extractJson(text: string) {
   }
 }
 
-// 核心:直接把一個 messages 陣列丟給 OpenAI Responses API。
-// 這是「像 Claude 聊天」的關鍵 —— 模型看到的是一輪一輪有角色的對話，
-// 而不是被壓扁成一大段文字。
-async function callOpenAIMessages(messages: ChatMessage[]) {
+// 核心:把 messages 陣列(可選 tools)丟給 OpenAI Responses API。
+// 帶 tools 時(例如 Magnific MCP),OpenAI 會在伺服器端自動執行工具呼叫,
+// 直接回最終結果,我們不用自己處理工具迴圈。
+async function callOpenAIMessages(messages: ChatMessage[], tools?: any[]) {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
     throw new Error("Missing OPENAI_API_KEY");
+  }
+
+  const requestBody: any = {
+    model: getOpenAIModel(),
+    input: messages,
+  };
+
+  if (tools && tools.length > 0) {
+    requestBody.tools = tools;
   }
 
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -83,10 +92,7 @@ async function callOpenAIMessages(messages: ChatMessage[]) {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: getOpenAIModel(),
-      input: messages,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
@@ -284,6 +290,15 @@ export async function runDirectAgentWithConversation(
     getAgentConversationMessages,
   } = await import("./agent-conversations");
 
+  const {
+    isMagnificIntent,
+    getActiveMagnificConnection,
+    getValidMagnificAccessToken,
+    buildMagnificMcpTool,
+    getMagnificConnectUrl,
+    recordMagnificRun,
+  } = await import("./tools/magnific/mcp");
+
   const agentProfiles = await getActiveAgentProfiles();
 
   const profile = agentProfiles.find(
@@ -331,9 +346,70 @@ export async function runDirectAgentWithConversation(
     })),
   ];
 
-  const response = await callOpenAIMessages(input);
+  // 5. 判斷是否要掛 Magnific 工具(只有 Eric + 訊息含 magnific 意圖時)
+  const slackTeamId = conversationContext?.slackTeamId || "manual";
+  const slackUserId = conversationContext?.slackUserId || "manual";
 
-  // 5. 把這次回覆也存回去，下一輪就記得
+  const wantsMagnific =
+    agentKey === "eric" && isMagnificIntent(userMessage);
+
+  let tools: any[] | undefined;
+
+  if (wantsMagnific) {
+    const connection = await getActiveMagnificConnection({
+      slackTeamId,
+      slackUserId,
+    });
+
+    if (!connection) {
+      // 還沒連接過 Magnific → 回連接連結,不呼叫模型
+      const connectUrl = getMagnificConnectUrl({ slackTeamId, slackUserId });
+      const reply = `要我用 Magnific 幫你生圖之前，先點這裡連接你的 Magnific 帳號：\n${connectUrl}\n連好後再跟我說一次要做什麼就好。`;
+
+      await saveAgentConversationMessage({
+        threadId: thread.id,
+        agentKey,
+        role: "assistant",
+        content: reply,
+        context: { ...conversationContext, agentKey },
+      });
+
+      return { agent: profile, thread, finalAnswer: reply };
+    }
+
+    const accessToken = await getValidMagnificAccessToken(connection);
+    tools = [buildMagnificMcpTool(accessToken)];
+  }
+
+  // 6. 呼叫模型(帶或不帶工具)
+  let response: string;
+
+  try {
+    response = await callOpenAIMessages(input, tools);
+
+    if (wantsMagnific) {
+      await recordMagnificRun({
+        slackTeamId,
+        slackUserId,
+        userInput: userMessage,
+        status: "success",
+        responseText: response,
+      });
+    }
+  } catch (error: any) {
+    if (wantsMagnific) {
+      await recordMagnificRun({
+        slackTeamId,
+        slackUserId,
+        userInput: userMessage,
+        status: "error",
+        errorMessage: error?.message || "Unknown error",
+      });
+    }
+    throw error;
+  }
+
+  // 7. 把這次回覆也存回去，下一輪就記得
   await saveAgentConversationMessage({
     threadId: thread.id,
     agentKey,

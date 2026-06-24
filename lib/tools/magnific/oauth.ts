@@ -89,3 +89,30 @@ export async function exchangeMagnificCode(params: {
 
   return response.json();
 }
+
+// 新增:用 refresh_token 換一組新的 access_token(舊 token 過期時用)
+export async function refreshMagnificToken(refreshToken: string) {
+  const { clientId, clientSecret } = getMagnificOAuthConfig();
+
+  const body = new URLSearchParams();
+
+  body.set("grant_type", "refresh_token");
+  body.set("client_id", clientId);
+  body.set("client_secret", clientSecret);
+  body.set("refresh_token", refreshToken);
+
+  const response = await fetch(TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Magnific token refresh failed: ${errorText}`);
+  }
+
+  return response.json();
+}
