@@ -53,6 +53,13 @@ async function magnificModelCall(
     server_url: process.env.MAGNIFIC_MCP_SERVER_URL,
     authorization: accessToken,
     require_approval: "never",
+    // 只載入生圖/查詢需要的工具,大幅降低 token(避免 TPM 上限)
+    allowed_tools: [
+      "images_generate",
+      "creation_status",
+      "creations_get",
+      "creations_wait",
+    ],
   };
 
   const response = await fetch("https://api.openai.com/v1/responses", {

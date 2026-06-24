@@ -78,8 +78,15 @@ export function buildMagnificMcpTool(accessToken: string) {
     server_url: process.env.MAGNIFIC_MCP_SERVER_URL,
     authorization: accessToken,
     require_approval: "never",
-    // 想限制 Eric 只能用某些工具時,再打開下面這行並填正確的工具名稱:
-    // allowed_tools: ["images_generate", "images_upscale", "images_remove_background"],
+    // 只載入生圖會用到的工具,大幅降低每次呼叫的 token(避免 TPM 上限)
+    allowed_tools: [
+      "images_generate",
+      "images_upscale",
+      "images_remove_background",
+      "creation_status",
+      "creations_get",
+      "creations_wait",
+    ],
   };
 }
 
