@@ -117,13 +117,10 @@ async function processEvent(
 
   if (!userMessage) return;
 
-  // 是不是私訊(DM)
-  const isDM = event.type === "message" && event.channel_type === "im";
-
-  // 回覆要不要掛 thread:
-  // - DM:平鋪回覆,像真的在跟一個人連續聊天。
-  // - 頻道:掛在被 @ 的訊息下方,避免洗版。
-  const replyThreadTs = isDM ? undefined : event.thread_ts || event.ts;
+  // 回覆位置:
+  // - 頂層 @ 或 DM(本來就沒有 thread_ts)→ 直接平鋪在頻道/對話裡,像聊天室。
+  // - 只有當使用者本來就在某個對話串裡 @ 他,才回在那個串裡。
+  const replyThreadTs = event.thread_ts;
 
   try {
     const result = await runDirectAgentWithConversation(agentKey, userMessage, {
