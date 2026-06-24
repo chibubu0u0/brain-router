@@ -122,18 +122,35 @@ async function processEvent(
   // - 只有當使用者本來就在某個對話串裡 @ 他,才回在那個串裡。
   const replyThreadTs = event.thread_ts;
 
-  // 生圖類請求先回一句「生成中」,避免使用者乾等不知道有沒有在跑
-  const showGenerating = agentKey === "eric" && /magnific/i.test(userMessage);
+  // 生圖請求 → 走「背景生圖」流程(它自己會回生成中、輪詢、完成後貼圖)
+  const wantsMagnific = agentKey === "eric" && /magnific/i.test(userMessage);
 
-  try {
-    if (showGenerating) {
+  if (wantsMagnific) {
+    try {
+      const { handleMagnificRequest } = await import(
+        "@/lib/tools/magnific/generate"
+      );
+
+      await handleMagnificRequest({
+        agentKey,
+        userMessage,
+        botToken,
+        slackTeamId: teamId,
+        slackChannelId: channel,
+        slackUserId: event.user,
+        slackThreadTs: replyThreadTs,
+      });
+    } catch (error: any) {
       await postMessage(botToken, {
         channel,
-        text: "🎨 收到,生成中…給我一點時間。",
+        text: `發生錯誤：${error.message || "Unknown error"}`,
         thread_ts: replyThreadTs,
       });
     }
+    return;
+  }
 
+  try {
     const result = await runDirectAgentWithConversation(agentKey, userMessage, {
       source: "slack",
       projectKey: "brain_router",
