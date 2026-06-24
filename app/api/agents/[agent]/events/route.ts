@@ -113,10 +113,17 @@ async function processEvent(
   teamId: string
 ) {
   const channel = event.channel;
-  const threadTs = event.thread_ts || event.ts; // 回覆掛在同一串,形成對話框
   const userMessage = stripMentions(event.text || "");
 
   if (!userMessage) return;
+
+  // 是不是私訊(DM)
+  const isDM = event.type === "message" && event.channel_type === "im";
+
+  // 回覆要不要掛 thread:
+  // - DM:平鋪回覆,像真的在跟一個人連續聊天。
+  // - 頻道:掛在被 @ 的訊息下方,避免洗版。
+  const replyThreadTs = isDM ? undefined : event.thread_ts || event.ts;
 
   try {
     const result = await runDirectAgentWithConversation(agentKey, userMessage, {
@@ -125,20 +132,23 @@ async function processEvent(
       slackTeamId: teamId,
       slackChannelId: channel,
       slackUserId: event.user,
-      slackThreadTs: threadTs,
+      // 注意:這裡「故意不傳 slackThreadTs」。
+      // 記憶會以「頻道 + 使用者」為單位(見 agent-conversations 的 getThreadKey),
+      // 所以你在同一個地方跟 Eric 講的話都算同一條連續對話,
+      // 不管你是發新訊息、還是在 thread 裡回覆,他都記得。
       slackCommand: `@${agentKey}`,
     });
 
     await postMessage(botToken, {
       channel,
       text: result.finalAnswer,
-      thread_ts: threadTs,
+      thread_ts: replyThreadTs,
     });
   } catch (error: any) {
     await postMessage(botToken, {
       channel,
       text: `發生錯誤：${error.message || "Unknown error"}`,
-      thread_ts: threadTs,
+      thread_ts: replyThreadTs,
     });
   }
 }
