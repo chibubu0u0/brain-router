@@ -34,7 +34,7 @@ Discord 會送出已簽章的 PING；Vercel 環境變數正確時會驗證成功
 
 ## 4. 註冊測試指令
 
-先在 Discord 開啟 Developer Mode，複製測試 Server 的 ID。於本機暫時設定：
+先在 Discord 開啟 Developer Mode，複製測試 Server 的 ID。把以下內容放進 repo 根目錄的 `.env.local`（註冊工具會自動讀取）：
 
 ```text
 DISCORD_APPLICATION_ID=<Application ID>

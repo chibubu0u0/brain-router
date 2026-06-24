@@ -1,3 +1,9 @@
+try {
+  process.loadEnvFile(".env.local");
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+}
+
 const applicationId = process.env.DISCORD_APPLICATION_ID;
 const botToken = process.env.DISCORD_BOT_TOKEN;
 const guildId = process.env.DISCORD_GUILD_ID;
