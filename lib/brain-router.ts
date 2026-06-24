@@ -29,6 +29,12 @@ type ExpertResponse = {
   response: string;
 };
 
+// OpenAI Responses API 的一輪訊息
+type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
 function getOpenAIModel() {
   return process.env.OPENAI_MODEL || "gpt-4o-mini";
 }
@@ -61,7 +67,10 @@ function extractJson(text: string) {
   }
 }
 
-async function callOpenAI(systemPrompt: string, userMessage: string) {
+// 核心:直接把一個 messages 陣列丟給 OpenAI Responses API。
+// 這是「像 Claude 聊天」的關鍵 —— 模型看到的是一輪一輪有角色的對話，
+// 而不是被壓扁成一大段文字。
+async function callOpenAIMessages(messages: ChatMessage[]) {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
@@ -76,16 +85,7 @@ async function callOpenAI(systemPrompt: string, userMessage: string) {
     },
     body: JSON.stringify({
       model: getOpenAIModel(),
-      input: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: userMessage,
-        },
-      ],
+      input: messages,
     }),
   });
 
@@ -96,6 +96,14 @@ async function callOpenAI(systemPrompt: string, userMessage: string) {
 
   const data = await response.json();
   return extractOutputText(data);
+}
+
+// 給 Router / Expert / Aggregator 用的單輪呼叫(沒有對話歷史)
+async function callOpenAI(systemPrompt: string, userMessage: string) {
+  return callOpenAIMessages([
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userMessage },
+  ]);
 }
 
 export async function getActiveAgentProfiles(): Promise<AgentProfile[]> {
@@ -274,7 +282,6 @@ export async function runDirectAgentWithConversation(
     getOrCreateAgentConversationThread,
     saveAgentConversationMessage,
     getAgentConversationMessages,
-    formatAgentConversationMessages,
   } = await import("./agent-conversations");
 
   const agentProfiles = await getActiveAgentProfiles();
@@ -292,6 +299,7 @@ export async function runDirectAgentWithConversation(
     agentKey,
   });
 
+  // 1. 先把使用者這句存進去
   await saveAgentConversationMessage({
     threadId: thread.id,
     agentKey,
@@ -303,35 +311,29 @@ export async function runDirectAgentWithConversation(
     },
   });
 
-  const messages = await getAgentConversationMessages(thread.id);
-  const fullConversation = formatAgentConversationMessages(messages);
+  // 2. 讀出這條對話到目前為止的「全部訊息」(依時間排序，已含剛存的這句)
+  const history = await getAgentConversationMessages(thread.id);
 
-  const systemPrompt = buildExpertPrompt(profile);
+  // 3. system:人格設定 + 一段「你正在直接聊天」的框架說明
+  const systemPrompt = `${buildExpertPrompt(profile)}
 
-  const directConversationMessage = `
-這是你和使用者在 Slack 裡的對話紀錄。
-這些內容是你的記憶與上下文，不是要你重述。
+你現在不是 Brain Router，也不是被 Router 指派任務。
+使用者是直接在 Slack 找你本人聊天。
+下面會以一輪一輪的方式給你你跟使用者到目前為止的完整對話，
+這些是你的記憶與上下文，請自然延續，不要重述、不要報告格式。`;
 
-你現在不是 Brain Router。
-你也不是被 Brain Router 指派任務。
-使用者是直接找你本人聊天。
+  // 4. 組成 Claude 式的多輪對話:system + 逐輪 user/assistant 歷史
+  const input: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    ...history.map((message): ChatMessage => ({
+      role: message.role === "assistant" ? "assistant" : "user",
+      content: message.content,
+    })),
+  ];
 
-請自然延續對話。
-不要用報告格式。
-不要百科式介紹。
-不要寫「以下是一些建議」。
-不要寫空泛顧問句。
-如果使用者只是分享偏好，你就像真人一樣接話、理解、補一點你的看法即可。
+  const response = await callOpenAIMessages(input);
 
-完整對話紀錄：
-${fullConversation}
-
-使用者最新訊息：
-${userMessage}
-`;
-
-  const response = await callOpenAI(systemPrompt, directConversationMessage);
-
+  // 5. 把這次回覆也存回去，下一輪就記得
   await saveAgentConversationMessage({
     threadId: thread.id,
     agentKey,
