@@ -122,7 +122,18 @@ async function processEvent(
   // - 只有當使用者本來就在某個對話串裡 @ 他,才回在那個串裡。
   const replyThreadTs = event.thread_ts;
 
+  // 生圖類請求先回一句「生成中」,避免使用者乾等不知道有沒有在跑
+  const showGenerating = agentKey === "eric" && /magnific/i.test(userMessage);
+
   try {
+    if (showGenerating) {
+      await postMessage(botToken, {
+        channel,
+        text: "🎨 收到,生成中…給我一點時間。",
+        thread_ts: replyThreadTs,
+      });
+    }
+
     const result = await runDirectAgentWithConversation(agentKey, userMessage, {
       source: "slack",
       projectKey: "brain_router",
