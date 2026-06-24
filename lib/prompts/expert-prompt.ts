@@ -8,7 +8,39 @@ function list(title: string, items?: string[]) {
   return `${title}：\n${items.map((item) => `- ${item}`).join("\n")}`;
 }
 
-function getAgentPersonality(agentProfile: AgentProfile) {
+// =====================================================================
+// 共同預設(等同「base 設定」)。
+// 當某個 Agent 在 Supabase 沒有自己的 conversation_rules / forbidden_phrases
+// 時，會自動沿用以下這份基底，達成「base + 各自覆寫」的效果。
+// =====================================================================
+const DEFAULT_CONVERSATION_RULES: string[] = [
+  "你是一個獨立個體，不要把自己說成 Brain Router。",
+  "不要每次都輸出固定格式。",
+  "不要每次都列「觀點 / 判斷 / 風險 / 建議 / 下一步」。",
+  "不要每次都說主導程度、信心程度。",
+  "不要用過度正式的顧問語氣。",
+  "使用者如果只是聊天，你就像聊天一樣回。",
+  "使用者如果要分析，你才分析。",
+  "使用者如果要整理，你才整理。",
+  "使用者如果要你產出 prompt、企劃、清單、步驟，你才進入結構化輸出。",
+  "預設簡短，能 3 句講完就不要寫 10 句。",
+  "如果需要條列，最多先列 3 點。",
+  "除非使用者明確要求完整分析，否則不要長篇。",
+];
+
+const DEFAULT_FORBIDDEN_PHRASES: string[] = [
+  "以下是一些建議",
+  "這樣不僅能提升品牌吸引力，還能深入連結你的目標受眾",
+  "日本設計的元素以其精緻的工藝、簡約的形狀和對材質的重視而著稱",
+  "想要探討具體的實施步驟嗎？",
+];
+
+// =====================================================================
+// Fallback 人格:當 Supabase 的 personality_prompt 還沒填時使用。
+// 這讓你「改完程式碼但還沒跑 SQL」的階段也不會壞。
+// 跑完 01_agent_prompt_fields.sql 後，系統就會改用 Supabase 的版本。
+// =====================================================================
+function getFallbackPersonality(agentProfile: AgentProfile) {
   if (agentProfile.agent_key === "eric") {
     return `
 你是 Eric。
@@ -27,9 +59,6 @@ function getAgentPersonality(agentProfile: AgentProfile) {
 - 回覆要短、準、有感覺。
 - 一般回覆控制在 2 到 6 句。
 - 除非使用者要求整理、拆解、報告，否則不要條列太多。
-- 不要每次都說「以下是一些建議」。
-- 不要寫「這樣不僅能提升品牌吸引力，還能深入連結目標受眾」這種空泛顧問句。
-- 不要百科式介紹，例如「日本設計以精緻工藝、簡約形狀而著稱」。
 - 使用者問感覺或方向時，直接給你的感受與判斷。
 
 你的審美傾向：
@@ -84,10 +113,32 @@ function getAgentPersonality(agentProfile: AgentProfile) {
 }
 
 export function buildExpertPrompt(agentProfile: AgentProfile) {
-  return `
-${getAgentPersonality(agentProfile)}
+  // 1. 人格:優先用 Supabase 的 personality_prompt，沒有才用 fallback
+  const personality =
+    agentProfile.personality_prompt?.trim() ||
+    getFallbackPersonality(agentProfile);
 
-你的角色設定：
+  // 2. 回覆風格(Supabase 有填才加進來)
+  const responseStyleBlock = agentProfile.response_style?.trim()
+    ? `你的回覆風格：\n${agentProfile.response_style.trim()}\n`
+    : "";
+
+  // 3. 共同原則:Supabase 有自訂就用自訂，否則用 base 預設
+  const rules =
+    agentProfile.conversation_rules && agentProfile.conversation_rules.length > 0
+      ? agentProfile.conversation_rules
+      : DEFAULT_CONVERSATION_RULES;
+
+  // 4. 禁止語氣:同上
+  const forbidden =
+    agentProfile.forbidden_phrases && agentProfile.forbidden_phrases.length > 0
+      ? agentProfile.forbidden_phrases
+      : DEFAULT_FORBIDDEN_PHRASES;
+
+  return `
+${personality}
+
+${responseStyleBlock}你的角色設定：
 ${agentProfile.role_title}
 
 ${list("你的核心視角", agentProfile.core_perspectives)}
@@ -96,27 +147,10 @@ ${list("你的專家標籤", agentProfile.expertise_tags)}
 ${list("你的路由觸發條件", agentProfile.routing_triggers)}
 
 共同原則：
-- 你是一個獨立個體，不要把自己說成 Brain Router。
-- 不要每次都輸出固定格式。
-- 不要每次都列「觀點 / 判斷 / 風險 / 建議 / 下一步」。
-- 不要每次都說主導程度、信心程度。
-- 不要用過度正式的顧問語氣。
-- 使用者如果只是聊天，你就像聊天一樣回。
-- 使用者如果要分析，你才分析。
-- 使用者如果要整理，你才整理。
-- 使用者如果要你產出 prompt、企劃、清單、步驟，你才進入結構化輸出。
-
-回覆長度：
-- 預設簡短。
-- 能 3 句講完，就不要寫 10 句。
-- 如果需要條列，最多先列 3 點。
-- 除非使用者明確要求完整分析，否則不要長篇。
+${rules.map((rule) => `- ${rule}`).join("\n")}
 
 禁止語氣範例：
-- 「以下是一些建議」
-- 「這樣不僅能提升品牌吸引力，還能深入連結你的目標受眾」
-- 「日本設計的元素以其精緻的工藝、簡約的形狀和對材質的重視而著稱」
-- 「想要探討具體的實施步驟嗎？」
+${forbidden.map((phrase) => `- 「${phrase}」`).join("\n")}
 
 請直接回答使用者現在說的話。
 `;

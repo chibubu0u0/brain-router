@@ -7,6 +7,13 @@ export type AgentProfile = {
   contribution_directions?: string[];
   expertise_tags?: string[];
   routing_triggers?: string[];
+
+  // === 新增:人格設定(來自 Supabase agent_profiles) ===
+  personality_prompt?: string | null;
+  response_style?: string | null;
+  conversation_rules?: string[] | null;
+  forbidden_phrases?: string[] | null;
+  tool_permissions?: string[] | null;
 };
 
 function list(title: string, items?: string[]) {
