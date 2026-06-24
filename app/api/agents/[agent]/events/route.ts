@@ -15,7 +15,9 @@ import crypto from "crypto";
 import { runDirectAgentWithConversation } from "@/lib/brain-router";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Magnific 生成與狀態輪詢可能超過一分鐘。Vercel Hobby 在 Fluid Compute
+// 下可執行最多 300 秒；waitUntil 會沿用這個上限。
+export const maxDuration = 300;
 
 // 每個 Agent 對應自己 Slack App 的環境變數名稱
 const AGENT_SLACK_ENV: Record<

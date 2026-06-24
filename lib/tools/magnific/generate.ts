@@ -22,6 +22,9 @@ import {
 } from "./mcp";
 
 const ERIC_BOT_TOKEN_ENV = "SLACK_ERIC_BOT_TOKEN";
+const OPENAI_MCP_TIMEOUT_MS = 90_000;
+const INLINE_POLL_WINDOW_MS = 180_000;
+const POLL_INTERVAL_MS = 10_000;
 
 function getOpenAIToolModel() {
   return process.env.OPENAI_TOOL_MODEL || process.env.OPENAI_MODEL || "gpt-4o";
@@ -64,6 +67,7 @@ async function magnificModelCall(
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
+    signal: AbortSignal.timeout(OPENAI_MCP_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -118,9 +122,11 @@ export async function checkMagnificStatus(
   creationId: string
 ): Promise<{ status: "processing" | "done" | "error"; imageUrl: string }> {
   const system = `你可以使用 Magnific 工具。
-請查詢識別碼為 ${creationId} 的生成狀態(用 creation_status，必要時再用 creations_get)，
-identifiers 欄位務必帶 ["${creationId}"]。
-只回一個 JSON，格式為：{"status":"processing|done|error","image_url":"<完成時的圖片 webUrl，否則空字串>"}
+請查詢識別碼為 ${creationId} 的生成狀態。
+- 使用 creation_status 時，參數必須是 creationIdentifier: "${creationId}"。
+- 使用 creations_wait 時，參數才是 identifiers: ["${creationId}"]。
+- 完成後可用 creations_get，參數是 creationIdentifier: "${creationId}"，並從 url、originalUrl 或 previewUrl 取圖片網址。
+只回一個 JSON，格式為：{"status":"processing|done|error","image_url":"<完成時的圖片網址，否則空字串>"}
 不要任何多餘文字。`;
 
   const text = await magnificModelCall(
@@ -142,7 +148,7 @@ async function postToSlack(
   botToken: string,
   params: { channel: string; text: string; thread_ts?: string | null }
 ) {
-  await fetch("https://slack.com/api/chat.postMessage", {
+  const response = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${botToken}`,
@@ -154,6 +160,11 @@ async function postToSlack(
       thread_ts: params.thread_ts || undefined,
     }),
   });
+
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    throw new Error(`Slack chat.postMessage error: ${data.error || response.status}`);
+  }
 }
 
 function sleep(ms: number) {
@@ -354,7 +365,7 @@ export async function handleMagnificRequest(params: {
   }
 
   // 5. 建立 job
-  const { data: job } = await supabaseAdmin
+  const { data: job, error: jobError } = await supabaseAdmin
     .from("magnific_jobs")
     .insert({
       agent_key: agentKey,
@@ -369,21 +380,42 @@ export async function handleMagnificRequest(params: {
     .select("*")
     .single();
 
-  if (!job) return;
+  // 即使背景任務表尚未建立，也不要像以前一樣靜默消失；先在這次
+  // Function 生命週期內繼續輪詢，仍有機會把完成圖片貼回 Slack。
+  const trackingJob =
+    job || {
+      id: null,
+      agent_key: agentKey,
+      creation_id: creationId,
+      user_input: userMessage,
+      status: "pending",
+      slack_team_id: slackTeamId,
+      slack_channel_id: slackChannelId,
+      slack_user_id: slackUserId,
+      slack_thread_ts: slackThreadTs || null,
+    };
 
-  // 6. 就地輪詢約 45 秒(多數圖會在此完成,直接貼出)
-  const deadline = Date.now() + 45_000;
+  if (jobError) {
+    console.error("Failed to persist Magnific job", jobError.message);
+  }
 
-  while (Date.now() < deadline) {
-    await sleep(5000);
-    const finished = await processMagnificJob(job);
+  // 6. 就地輪詢最多約 3 分鐘。搭配 route 的 300 秒上限，保留時間
+  // 給啟動生成、OAuth refresh、Slack 回貼與錯誤處理。
+  const deadline = Date.now() + INLINE_POLL_WINDOW_MS;
+
+  while (
+    Date.now() + POLL_INTERVAL_MS + OPENAI_MCP_TIMEOUT_MS < deadline
+  ) {
+    await sleep(POLL_INTERVAL_MS);
+    const finished = await processMagnificJob(trackingJob);
     if (finished) return;
   }
 
-  // 7. 還沒好 → 留著 job,交給 cron poller,並告知使用者
+  // 7. 還沒好 → 留著 job。若之後啟用排程，poll route 可接手；在那
+  // 之前不要承諾一定會自動回貼。
   await postToSlack(botToken, {
     channel: slackChannelId,
-    text: "這張比較花時間，還在生成中…好了我會自動貼上來。",
+    text: "這張生成超過目前的等待時間，任務還在 Magnific 裡，但我暫時拿不到完成圖。請稍後再試一次；我也已經把這個斷點記錄下來。",
     thread_ts: slackThreadTs,
   });
 }
