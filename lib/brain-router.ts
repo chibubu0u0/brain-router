@@ -343,6 +343,9 @@ export async function runDirectAgentWithConversation(
     agentKey,
   });
 
+  const conversationSource = conversationContext?.source || "slack";
+  const platformName =
+    conversationSource === "discord" ? "Discord" : "Slack";
   const slackTeamId = conversationContext?.slackTeamId || "manual";
   const slackUserId = conversationContext?.slackUserId || "manual";
 
@@ -367,7 +370,7 @@ export async function runDirectAgentWithConversation(
       const result = await ingestKnowledge({
         agentKey,
         content: knowledgeContent,
-        source: "slack",
+        source: conversationSource,
         sourceRef: `team:${slackTeamId} user:${slackUserId}`,
       });
 
@@ -410,7 +413,7 @@ export async function runDirectAgentWithConversation(
   let systemPrompt = `${buildExpertPrompt(profile)}
 
 你現在不是 Brain Router，也不是被 Router 指派任務。
-使用者是直接在 Slack 找你本人聊天。
+使用者是直接在 ${platformName} 找你本人聊天。
 下面會以一輪一輪的方式給你你跟使用者到目前為止的完整對話，
 這些是你的記憶與上下文，請自然延續，不要重述、不要報告格式。${knowledgeBlock}`;
 
@@ -419,9 +422,9 @@ export async function runDirectAgentWithConversation(
 
 【Magnific 生圖正確流程，務必照這個順序做】
 1. 先呼叫 images_generate 產生圖片；它會回傳一個 creation 識別碼(identifier)。
-2. 接著呼叫 creations_wait(或 creations_get)，並把上一步拿到的識別碼放進它要求的 identifiers 欄位，等圖片真的完成。
-   ——creations_wait 的 identifiers 是「必填」，沒帶就會失敗，務必帶上。
-3. 從完成的結果取得圖片的 webUrl，把這個「真實的 webUrl」直接貼進你的回覆。
+2. 接著呼叫 creations_wait，並把上一步拿到的識別碼放進 identifiers 陣列，等圖片真的完成。
+   也可以用 creation_status 或 creations_get，但這兩個工具的參數名稱是單數 creationIdentifier。
+3. 從完成的結果取得 url、originalUrl 或 previewUrl，把這個真實圖片網址直接貼進你的回覆。
 4. 絕對不要自己編造或填入假網址(例如 your-generated-image-url.com 這種佔位字串)。
    如果沒拿到真實 webUrl，就老實說「目前還沒拿到圖」並說明發生什麼錯誤，不要假裝成功。
 5. 回覆給使用者時用自然描述，不要貼出 UUID 等內部識別碼。

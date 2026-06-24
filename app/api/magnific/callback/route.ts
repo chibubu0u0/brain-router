@@ -102,6 +102,7 @@ export async function GET(req: NextRequest) {
 
     const slackTeamId = oauthState.slack_team_id || "manual";
     const slackUserId = oauthState.slack_user_id || "manual";
+    const isDiscord = slackTeamId.startsWith("discord:");
 
     const { data: existingConnection } = await supabaseAdmin
       .from("tool_connections")
@@ -168,8 +169,12 @@ export async function GET(req: NextRequest) {
       "Magnific 已連接",
       `<h1>Magnific 已成功連接</h1>
        <p>Eric Agent 現在可以使用 Magnific MCP。</p>
-       <p>你可以回到 Slack 測試：</p>
-       <p><code>/eric magnific 幫我生成一張序日製作所主視覺</code></p>`
+       <p>你可以回到 ${isDiscord ? "Discord" : "Slack"} 測試：</p>
+       <p><code>${
+         isDiscord
+           ? "/eric message:magnific 幫我生成一張序日製作所主視覺"
+           : "/eric magnific 幫我生成一張序日製作所主視覺"
+       }</code></p>`
     );
   } catch (error: any) {
     return htmlPage(
